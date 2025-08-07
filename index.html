@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>محاسبه‌گر مهلت‌ها و مواعد قانونی</title>
+  <!-- Load moment and moment-jalaali from local files to avoid CDN dependency -->
+  <script src="moment.min.js"></script>
+  <script src="moment-jalaali.js"></script>
+  <link rel="stylesheet" href="jalalidatepicker.min.css">
+  <style>
+    body {
+      font-family: sans-serif;
+      line-height: 1.6;
+      padding: 1rem;
+      background: #f9f9f9;
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 1rem 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    label {
+      display: block;
+      margin-top: 1rem;
+      font-weight: bold;
+    }
+    select, input[type="text"], input[type="date"] {
+      width: 100%;
+      padding: 0.4rem;
+      margin-top: 0.3rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .options {
+      display: flex;
+      align-items: center;
+      margin-top: 1rem;
+    }
+    .options label {
+      margin-left: 0.5rem;
+      font-weight: normal;
+    }
+    .btn {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      background: #4CAF50;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    .btn:hover {
+      background: #45a049;
+    }
+    .result {
+      margin-top: 2rem;
+      background: #f5f5f5;
+      padding: 1rem;
+      border-radius: 4px;
+      direction: rtl;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+    th, td {
+      padding: 0.5rem;
+      text-align: right;
+    }
+    th {
+      background: #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>محاسبه‌گر مهلت‌ها و مواعد قانونی</h1>
+    <p>با انتخاب دسته‌بندی، نوع مهلت و تاریخ شروع، تاریخ پایان مهلت قانونی را محاسبه کنید. روزهای جمعه (و در صورت تمایل پنج‌شنبه) و تعطیلات رسمی از محاسبه خارج می‌شوند.</p>
+    <label for="categorySelect">دسته‌بندی:</label>
+    <select id="categorySelect">
+      <!-- Options will be populated by script -->
+    </select>
+
+    <label for="itemSelect">نوع مهلت:</label>
+    <select id="itemSelect">
+      <option value="">ابتدا دسته‌بندی را انتخاب کنید</option>
+    </select>
+
+    <label for="dateInput">تاریخ شروع (به صورت شمسی، قالب jYYYY/jMM/jDD):</label>
+    <input type="text" id="dateInput" data-jdp placeholder="مثال: ۱۴۰۴/۰۲/۰۳">
+
+    <div class="options">
+      <input type="checkbox" id="isForeign">
+      <label for="isForeign">حداقل یکی از مخاطبین مقیم خارج از کشور است</label>
+    </div>
+    <div class="options">
+      <input type="checkbox" id="thuIsWeekend">
+      <label for="thuIsWeekend">پنج‌شنبه روز تعطیل محسوب شود</label>
+    </div>
+    <button class="btn" id="calcBtn">محاسبه</button>
+
+    <div id="result" class="result" style="display:none;"></div>
+  </div>
+
+  <script>
+    /* Dataset container.
+       این شیء برای نگهداری داده‌های بارگذاری شده در فایل datasets استفاده می‌شود.
+       هر دسته‌بندی در نهایت توسط فایل deadlines_dataset.js مقداردهی خواهد شد.
+     */
+    const datasets = {
+      "آئین دادرسی مدنی": {},
+      "آئین دادرسی کیفری": {},
+      "اجرای احکام مدنی": {}
+    };
+  </script>
+  <script>
+    // List of official holidays in Iran for the year 2025 (Gregorian) as ISO strings.
+    // These dates are excluded from deadlines along with weekends.
+    const holidays2025 = [
+      "2025-01-14", "2025-01-28", "2025-02-11", "2025-02-14",
+      "2025-03-02", "2025-03-19", "2025-03-20", "2025-03-21",
+      "2025-03-22", "2025-03-31", "2025-04-01", "2025-04-24",
+      "2025-06-04", "2025-06-05", "2025-06-06", "2025-06-14",
+      "2025-06-21", "2025-07-05", "2025-07-06", "2025-08-14",
+      "2025-08-22", "2025-08-24", "2025-09-01", "2025-09-10",
+      "2025-09-22", "2025-11-24", "2025-12-21"
+    ];
+
+    // Utility to check if a Gregorian date is holiday/weekend
+    function isHoliday(date, thuIsWeekend) {
+      // date: moment object (Gregorian)
+      const iso = date.format("YYYY-MM-DD");
+      const day = date.day(); // 0=Sunday, 1=Monday, ..., 5=Friday, 6=Saturday in moment
+      // In Iran the weekend is Friday (day=5) and optionally Thursday (day=4)
+      if (holidays2025.includes(iso)) return true;
+      if (day === 5) return true; // Friday
+      if (thuIsWeekend && day === 4) return true; // Thursday
+      return false;
+    }
+
+    // پس از بارگذاری فایل datasets، تابع populateCategoryOptions توسط آن فراخوانی خواهد شد.
+
+    // Populate category drop-down
+    function populateCategoryOptions() {
+      const categorySelect = document.getElementById('categorySelect');
+      categorySelect.innerHTML = '';
+      Object.keys(datasets).forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat;
+        option.textContent = cat;
+        categorySelect.appendChild(option);
+      });
+    }
+
+    // Populate item drop-down based on selected category
+    document.getElementById('categorySelect').addEventListener('change', function() {
+      const category = this.value;
+      const itemSelect = document.getElementById('itemSelect');
+      itemSelect.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'یک مورد را انتخاب کنید';
+      itemSelect.appendChild(placeholder);
+      if (category && datasets[category]) {
+        Object.keys(datasets[category]).forEach(item => {
+          const option = document.createElement('option');
+          option.value = item;
+          option.textContent = item;
+          itemSelect.appendChild(option);
+        });
+      }
+    });
+
+    // Main calculation function
+    document.getElementById('calcBtn').addEventListener('click', function() {
+      try {
+        const category = document.getElementById('categorySelect').value;
+        const itemKey = document.getElementById('itemSelect').value;
+        const dateStr = document.getElementById('dateInput').value.trim();
+        const isForeign = document.getElementById('isForeign').checked;
+        const thuIsWeekend = document.getElementById('thuIsWeekend').checked;
+        const resultDiv = document.getElementById('result');
+        // Clear previous result
+        resultDiv.innerHTML = '';
+        resultDiv.style.display = 'none';
+        // Validate selections
+        if (!category || !itemKey) {
+          alert('لطفاً دسته‌بندی و نوع مهلت را انتخاب کنید.');
+          return;
+        }
+        if (!dateStr) {
+          alert('لطفاً تاریخ شروع را وارد کنید.');
+          return;
+        }
+        // Parse input date as Jalali
+        const start = moment(dateStr, 'jYYYY/jMM/jDD');
+        if (!start.isValid()) {
+          alert('فرمت تاریخ وارد شده صحیح نیست. قالب باید به صورت jYYYY/jMM/jDD باشد.');
+          return;
+        }
+        // Retrieve selected item data
+        const itemData = datasets[category] ? datasets[category][itemKey] : null;
+        if (!itemData) {
+          alert('داده‌ای برای این انتخاب یافت نشد.');
+          return;
+        }
+        const durations = isForeign ? itemData.foreign : itemData.domestic;
+        const mode = itemData.mode;
+        // Convert start date to Gregorian moment for calculations.
+        let current = moment(start.toDate());
+        // Compute due date by iterating over durations
+        for (let idx = 0; idx < durations.length; idx++) {
+          const days = durations[idx];
+          // Add n days and start of day
+          let due = current.clone().add(days, 'days').startOf('day');
+          if (idx === 0) {
+            // Skip the starting day itself
+            due = due.add(1, 'day');
+          }
+          // Skip holidays and weekends
+          while (isHoliday(due, thuIsWeekend)) {
+            due = due.add(1, 'day');
+          }
+          current = due;
+        }
+        // Format result
+        const durationsStr = durations.join(' + ') + ' روز';
+        // Compute the Jalali due date without relying on locale loading
+        const jalaliDue = current.format('jYYYY/jMM/jDD');
+        const weekdayNamesFa = ['یکشنبه','دوشنبه','سه‌شنبه','چهارشنبه','پنج‌شنبه','جمعه','شنبه'];
+        const weekdayName = weekdayNamesFa[current.day()] || '';
+        const whenLabel = (mode === 1 ? 'آخرین مهلت' : 'اولین مهلت');
+        const whenTime = (mode === 1 ? 'پایان روز' : 'ابتدای روز');
+        // Build HTML output
+        let html = `<table><tr><th>عنوان</th><th>مقدار</th></tr>`;
+        html += `<tr><td>دسته‌بندی</td><td>${category}</td></tr>`;
+        html += `<tr><td>نوع مهلت</td><td>${itemKey}</td></tr>`;
+        html += `<tr><td>${itemData.beginning}</td><td>${start.format('jYYYY/jMM/jDD')}</td></tr>`;
+        html += `<tr><td>مدت</td><td>${durationsStr}</td></tr>`;
+        html += `<tr><td>${whenLabel}</td><td>${whenTime} ${weekdayName} ${jalaliDue}</td></tr>`;
+        const docText = itemData.documentation ? itemData.documentation : '—';
+        html += `<tr><td>مستندات</td><td>${docText}</td></tr>`;
+        html += `</table>`;
+        // Optional explanation for multi-step durations
+        if (itemData.domestic.length > 1) {
+          html += `<p>در مواردی که شروع مهلت جدید، تاریخ انقضای مهلت قبلی است، شمارش ایام مهلت جدید بلافاصله از تاریخ انقضای مهلت قدیم آغاز می‌گردد.</p>`;
+        }
+        // Display result
+        resultDiv.innerHTML = html;
+        resultDiv.style.display = 'block';
+      } catch (err) {
+        // In case of unexpected errors, show the message to the user for debugging
+        alert('خطا: ' + (err && err.message ? err.message : err));
+      }
+    });
+
+    // We rely on moment-jalaali's ability to convert Jalali moment to native Date
+    // via toDate(), then pass it to moment() for Gregorian operations. No custom
+    // conversion method is necessary.
+  </script>
+  <!-- بارگذاری مجموعه داده‌ها از فایل خارجی -->
+  <script src="deadlines_dataset.js"></script>
+  <!-- Jalali date picker library -->
+  <script src="jalalidatepicker.min.js"></script>
+  <script>
+    // Activate the jalali date picker on inputs with data-jdp attribute
+    if (typeof jalaliDatepicker !== 'undefined') {
+      jalaliDatepicker.startWatch();
+    }
+  </script>
+</body>
+</html>
